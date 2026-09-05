@@ -465,9 +465,15 @@ async function handleMessage(event: any) {
       return;
     }
 const instagramUsername =
-  await getInstagramUsernameFromMessage(
+  await getInstagramUsername(
+    senderId,
     messageId
   );
+
+console.log(
+  "FINAL INSTAGRAM USERNAME:",
+  instagramUsername
+);
 
 console.log(
   "DIRECT DM USERNAME:",
@@ -869,28 +875,43 @@ IMPORTANT:
   ) as WaitlistDecision;
 }
 
-async function getInstagramUsernameFromMessage(
+async function getInstagramUsername(
+  senderId: string,
   messageId: string
 ): Promise<string | null> {
   const accessToken =
     process.env.INSTAGRAM_ACCESS_TOKEN;
 
+  const accountId =
+    process.env.INSTAGRAM_ACCOUNT_ID;
+
   const version =
     process.env.INSTAGRAM_GRAPH_VERSION ??
     "v26.0";
 
-  if (!accessToken) {
+  if (!accessToken || !accountId) {
     console.error(
-      "INSTAGRAM_ACCESS_TOKEN is missing"
+      "Missing Instagram credentials for username lookup"
     );
 
     return null;
   }
 
+  // ==================================================
+  // METHOD 1:
+  // LOOK UP THE EXACT MESSAGE
+  // ==================================================
+
   try {
+    const params =
+      new URLSearchParams({
+        fields:
+          "id,created_time,from,to,message",
+      });
+
     const response =
       await fetch(
-        `https://graph.instagram.com/${version}/${messageId}?fields=from`,
+        `https://graph.instagram.com/${version}/${messageId}?${params}`,
         {
           headers: {
             Authorization:
@@ -902,22 +923,129 @@ async function getInstagramUsernameFromMessage(
     const data =
       await response.json();
 
-    if (!response.ok) {
+    console.log(
+      "MESSAGE USERNAME LOOKUP:",
+      JSON.stringify(data)
+    );
+
+    if (
+      response.ok &&
+      data?.from?.username
+    ) {
+      return data.from.username;
+    }
+  } catch (error) {
+    console.error(
+      "Message username lookup failed:",
+      error
+    );
+  }
+
+  // ==================================================
+  // METHOD 2:
+  // FIND CONVERSATION USING SENDER IGSID
+  // ==================================================
+
+  try {
+    const conversationParams =
+      new URLSearchParams({
+        user_id:
+          senderId,
+      });
+
+    const conversationResponse =
+      await fetch(
+        `https://graph.instagram.com/${version}/${accountId}/conversations?${conversationParams}`,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+    const conversationData =
+      await conversationResponse.json();
+
+    console.log(
+      "CONVERSATION LOOKUP:",
+      JSON.stringify(
+        conversationData
+      )
+    );
+
+    if (
+      !conversationResponse.ok
+    ) {
+      return null;
+    }
+
+    const conversationId =
+      conversationData
+        ?.data?.[0]?.id;
+
+    if (!conversationId) {
       console.error(
-        "Failed to get Instagram message info:",
-        data
+        "No conversation found for:",
+        senderId
       );
 
       return null;
     }
 
-    return (
-      data?.from?.username ??
-      null
+    // ==================================================
+    // GET RECENT MESSAGES + THEIR SENDERS
+    // ==================================================
+
+    const messageParams =
+      new URLSearchParams({
+        fields:
+          "messages.limit(20){from,to}",
+      });
+
+    const messagesResponse =
+      await fetch(
+        `https://graph.instagram.com/${version}/${conversationId}?${messageParams}`,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+    const messagesData =
+      await messagesResponse.json();
+
+    console.log(
+      "CONVERSATION MESSAGES:",
+      JSON.stringify(
+        messagesData
+      )
     );
+
+    if (!messagesResponse.ok) {
+      return null;
+    }
+
+    const messages =
+      messagesData?.messages
+        ?.data ?? [];
+
+    for (const item of messages) {
+      if (
+        String(item?.from?.id) ===
+          String(senderId) &&
+        item?.from?.username
+      ) {
+        return item.from.username;
+      }
+    }
+
+    return null;
   } catch (error) {
     console.error(
-      "Instagram username lookup failed:",
+      "Conversation username lookup failed:",
       error
     );
 
