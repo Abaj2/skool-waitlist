@@ -381,7 +381,7 @@ async function handleMessage(event: any) {
     return;
   }
 
-  // Don't process our own outgoing messages.
+  // Ignore messages sent by our own account.
   if (message.is_echo) {
     return;
   }
@@ -396,14 +396,14 @@ async function handleMessage(event: any) {
     return;
   }
 
-  console.log("NEW WAITLIST DM:", {
+  console.log("NEW INSTAGRAM DM:", {
     senderId,
     text,
     messageId,
   });
 
   // ==================================================
-  // FIND WAITLIST LEAD
+  // LOOK FOR EXISTING WAITLIST LEAD
   // ==================================================
 
   const {
@@ -427,18 +427,114 @@ async function handleMessage(event: any) {
     return;
   }
 
-  // This is just a normal Instagram DM.
-  // Leave it alone.
+  // ==================================================
+  // NEW DIRECT-DM ENTRY
+  //
+  // If they're not already in the funnel but they DM
+  // "community" or a close typo, start the waitlist.
+  // ==================================================
+
   if (!lead) {
+    if (!isCommunityTrigger(text)) {
+      console.log(
+        "Normal DM unrelated to community waitlist"
+      );
+
+      return;
+    }
+
     console.log(
-      "DM is unrelated to community waitlist"
+      "DIRECT COMMUNITY DM DETECTED:",
+      text
+    );
+
+    // Save incoming DM first for duplicate protection.
+    const saved =
+      await saveUserMessage(
+        senderId,
+        text,
+        messageId
+      );
+
+    if (!saved) {
+      console.log(
+        "Duplicate direct community DM ignored:",
+        messageId
+      );
+
+      return;
+    }
+
+    const {
+      error: createLeadError,
+    } = await supabaseAdmin
+      .from("community_waitlist_leads")
+      .insert({
+        instagram_user_id:
+          senderId,
+
+        instagram_username:
+          null,
+
+        status:
+          "awaiting_confirmation",
+
+        // Keeps your existing NOT NULL + UNIQUE
+        // source_comment_id column happy.
+        source_comment_id:
+          `dm:${messageId}`,
+
+        source_media_id:
+          null,
+
+        source_comment_text:
+          text,
+
+        updated_at:
+          new Date().toISOString(),
+      });
+
+    if (createLeadError) {
+      // Another webhook request may have created
+      // the lead at almost the same time.
+      if (
+        createLeadError.code === "23505"
+      ) {
+        console.log(
+          "Direct DM lead already exists"
+        );
+
+        return;
+      }
+
+      console.error(
+        "Failed to create direct-DM waitlist lead:",
+        createLeadError
+      );
+
+      return;
+    }
+
+    await sendInstagramMessage(
+      senderId,
+      FIRST_DM
+    );
+
+    await saveAssistantMessage(
+      senderId,
+      FIRST_DM
+    );
+
+    console.log(
+      "DIRECT DM WAITLIST FUNNEL STARTED:",
+      senderId
     );
 
     return;
   }
 
   // ==================================================
-  // AUTOMATION FINISHED
+  // AUTOMATION ALREADY FINISHED
   // ==================================================
 
   if (
@@ -474,9 +570,7 @@ async function handleMessage(event: any) {
   }
 
   // ==================================================
-  // THEY ALREADY SENT AN EMAIL
-  //
-  // We don't need AI to decide anything.
+  // EMAIL SENT
   // ==================================================
 
   const email =
@@ -501,7 +595,7 @@ async function handleMessage(event: any) {
     );
 
   // ==================================================
-  // LET OPENAI DECIDE NEXT RESPONSE
+  // AI DECIDES NEXT RESPONSE
   // ==================================================
 
   const decision =
@@ -518,7 +612,7 @@ async function handleMessage(event: any) {
   );
 
   // ==================================================
-  // USER WANTS WAITLIST
+  // THEY WANT TO JOIN
   // ==================================================
 
   if (
@@ -532,7 +626,7 @@ async function handleMessage(event: any) {
   }
 
   // ==================================================
-  // USER DOESN'T WANT IT
+  // THEY DON'T WANT TO JOIN
   // ==================================================
 
   if (
