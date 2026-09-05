@@ -15,54 +15,90 @@ const FIRST_DM =
 
 type WaitlistDecision = {
   reply: string;
-  action: "reply" | "ask_email" | "decline";
+  action:
+    | "reply"
+    | "ask_username"
+    | "ask_email"
+    | "decline";
 };
 
 // ======================================================
 // GET
-// Meta webhook verification
+// META WEBHOOK VERIFICATION
 // ======================================================
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
-  const mode = searchParams.get("hub.mode");
-  const token = searchParams.get("hub.verify_token");
-  const challenge = searchParams.get("hub.challenge");
+  const mode =
+    searchParams.get("hub.mode");
+
+  const token =
+    searchParams.get(
+      "hub.verify_token"
+    );
+
+  const challenge =
+    searchParams.get(
+      "hub.challenge"
+    );
 
   if (
     mode === "subscribe" &&
-    token === process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN
+    token ===
+      process.env
+        .INSTAGRAM_WEBHOOK_VERIFY_TOKEN
   ) {
-    console.log("Instagram webhook verified");
+    console.log(
+      "Instagram webhook verified"
+    );
 
-    return new NextResponse(challenge ?? "", {
-      status: 200,
-    });
+    return new NextResponse(
+      challenge ?? "",
+      {
+        status: 200,
+      }
+    );
   }
 
-  console.error("Instagram webhook verification failed");
+  console.error(
+    "Instagram webhook verification failed"
+  );
 
-  return new NextResponse("Forbidden", {
-    status: 403,
-  });
+  return new NextResponse(
+    "Forbidden",
+    {
+      status: 403,
+    }
+  );
 }
 
 // ======================================================
 // POST
-// Receives comment + message webhooks
+// COMMENT + MESSAGE WEBHOOKS
 // ======================================================
 
-export async function POST(req: NextRequest) {
+export async function POST(
+  req: NextRequest
+) {
   try {
-    const rawBody = await req.text();
+    const rawBody =
+      await req.text();
 
-    if (!verifyInstagramSignature(req, rawBody)) {
-      console.error("Invalid Instagram webhook signature");
+    if (
+      !verifyInstagramSignature(
+        req,
+        rawBody
+      )
+    ) {
+      console.error(
+        "Invalid Instagram webhook signature"
+      );
 
       return NextResponse.json(
         {
-          error: "Invalid signature",
+          error:
+            "Invalid signature",
         },
         {
           status: 401,
@@ -70,95 +106,124 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = JSON.parse(rawBody);
+    const body =
+      JSON.parse(rawBody);
 
     console.log(
       "INSTAGRAM EVENT:",
-      JSON.stringify(body, null, 2)
+      JSON.stringify(
+        body,
+        null,
+        2
+      )
     );
 
-    if (body.object !== "instagram") {
+    if (
+      body.object !==
+      "instagram"
+    ) {
       return NextResponse.json({
         received: true,
       });
     }
 
-   for (const entry of body.entry ?? []) {
-  console.log(
-    "ENTRY DEBUG:",
-    JSON.stringify(entry, null, 2)
-  );
-
-  let commentHandled = false;
-
-  // ==================================================
-  // FORMAT 1:
-  // Instagram comment webhook documented format
-  // entry.field + entry.value
-  // ==================================================
-
-  if (
-    entry.field === "comments" &&
-    entry.value
-  ) {
-    console.log(
-      "COMMENT WEBHOOK DETECTED: direct format"
-    );
-
-    await handleComment(entry.value);
-
-    commentHandled = true;
-  }
-
-  // ==================================================
-  // FORMAT 2:
-  // Some webhook payloads can wrap field/value
-  // inside entry.changes[]
-  // ==================================================
-
-  if (!commentHandled) {
-    for (const change of entry.changes ?? []) {
+    for (
+      const entry of
+      body.entry ?? []
+    ) {
       console.log(
-        "CHANGE FIELD:",
-        change?.field
-      );
-
-      console.log(
-        "CHANGE VALUE:",
+        "ENTRY DEBUG:",
         JSON.stringify(
-          change?.value,
+          entry,
           null,
           2
         )
       );
 
+      let commentHandled =
+        false;
+
+      // ==================================================
+      // COMMENT FORMAT 1
+      // entry.field + entry.value
+      // ==================================================
+
       if (
-        change?.field === "comments" &&
-        change?.value
+        entry.field ===
+          "comments" &&
+        entry.value
       ) {
         console.log(
-          "COMMENT WEBHOOK DETECTED: changes format"
+          "COMMENT WEBHOOK DETECTED: direct format"
         );
 
         await handleComment(
-          change.value
+          entry.value
         );
 
-        commentHandled = true;
+        commentHandled =
+          true;
+      }
 
-        break;
+      // ==================================================
+      // COMMENT FORMAT 2
+      // entry.changes[]
+      // ==================================================
+
+      if (!commentHandled) {
+        for (
+          const change of
+          entry.changes ?? []
+        ) {
+          console.log(
+            "CHANGE FIELD:",
+            change?.field
+          );
+
+          console.log(
+            "CHANGE VALUE:",
+            JSON.stringify(
+              change?.value,
+              null,
+              2
+            )
+          );
+
+          if (
+            change?.field ===
+              "comments" &&
+            change?.value
+          ) {
+            console.log(
+              "COMMENT WEBHOOK DETECTED: changes format"
+            );
+
+            await handleComment(
+              change.value
+            );
+
+            commentHandled =
+              true;
+
+            break;
+          }
+        }
+      }
+
+      // ==================================================
+      // INSTAGRAM DMS
+      // ==================================================
+
+      for (
+        const event of
+        entry.messaging ?? []
+      ) {
+        await handleMessage(
+          event
+        );
       }
     }
-  }
 
-  // ==================================================
-  // INSTAGRAM DMS
-  // ==================================================
-
-  for (const event of entry.messaging ?? []) {
-    await handleMessage(event);
-  }
-}
     return NextResponse.json({
       received: true,
     });
@@ -170,7 +235,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        error: "Webhook failed",
+        error:
+          "Webhook failed",
       },
       {
         status: 500,
@@ -183,35 +249,64 @@ export async function POST(req: NextRequest) {
 // HANDLE COMMENT
 // ======================================================
 
-async function handleComment(value: any) {
+async function handleComment(
+  value: any
+) {
   console.log(
-  "HANDLE COMMENT CALLED:",
-  JSON.stringify(value, null, 2)
-);
-  const commentId = value?.id;
+    "HANDLE COMMENT CALLED:",
+    JSON.stringify(
+      value,
+      null,
+      2
+    )
+  );
+
+  const commentId =
+    value?.id;
 
   const username =
-    value?.from?.username ?? null;
+    value?.from?.username ??
+    value?.username ??
+    null;
 
   const text =
     value?.text ?? "";
 
   const mediaId =
-    value?.media?.id ?? null;
+    value?.media?.id ??
+    value?.media_id ??
+    null;
 
-  if (!commentId || !text) {
+  if (
+    !commentId ||
+    !text
+  ) {
+    console.log(
+      "Comment missing ID or text"
+    );
+
     return;
   }
 
-  console.log("NEW COMMENT:", {
-    commentId,
-    username,
-    text,
-    mediaId,
-  });
+  console.log(
+    "NEW COMMENT:",
+    {
+      commentId,
+      username,
+      text,
+      mediaId,
+    }
+  );
 
-  // Only trigger on COMMUNITY / typos
-  if (!isCommunityTrigger(text)) {
+  // ==================================================
+  // DOES COMMENT MATCH COMMUNITY?
+  // ==================================================
+
+  if (
+    !isCommunityTrigger(
+      text
+    )
+  ) {
     console.log(
       "Comment does not match COMMUNITY"
     );
@@ -225,19 +320,30 @@ async function handleComment(value: any) {
   );
 
   // ==================================================
-  // CHECK IF EXACT COMMENT ALREADY PROCESSED
+  // CHECK EXACT COMMENT
   // ==================================================
 
   const {
-    data: existingComment,
-    error: existingCommentError,
+    data:
+      existingComment,
+    error:
+      existingCommentError,
   } = await supabaseAdmin
-    .from("community_waitlist_leads")
-    .select("id, status")
-    .eq("source_comment_id", commentId)
+    .from(
+      "community_waitlist_leads"
+    )
+    .select(
+      "id, status"
+    )
+    .eq(
+      "source_comment_id",
+      commentId
+    )
     .maybeSingle();
 
-  if (existingCommentError) {
+  if (
+    existingCommentError
+  ) {
     console.error(
       "Comment lookup failed:",
       existingCommentError
@@ -246,7 +352,9 @@ async function handleComment(value: any) {
     return;
   }
 
-  if (existingComment) {
+  if (
+    existingComment
+  ) {
     console.log(
       "Comment already processed"
     );
@@ -255,55 +363,16 @@ async function handleComment(value: any) {
   }
 
   // ==================================================
-  // CHECK IF USER ALREADY ENTERED FUNNEL
-  // ==================================================
-
-  if (username) {
-    const {
-      data: existingUsers,
-      error: existingUserError,
-    } = await supabaseAdmin
-      .from("community_waitlist_leads")
-      .select("id, status")
-      .ilike(
-        "instagram_username",
-        username
-      )
-      .limit(1);
-
-    if (existingUserError) {
-      console.error(
-        "Username lookup failed:",
-        existingUserError
-      );
-
-      return;
-    }
-
-    if (
-      existingUsers &&
-      existingUsers.length > 0
-    ) {
-      console.log(
-        "Instagram user already exists in waitlist funnel:",
-        username
-      );
-
-      return;
-    }
-  }
-
-  // ==================================================
   // RESERVE COMMENT
-  //
-  // Stops duplicate webhook requests from sending
-  // the private message twice.
   // ==================================================
 
   const {
-    error: reserveError,
+    error:
+      reserveError,
   } = await supabaseAdmin
-    .from("community_waitlist_leads")
+    .from(
+      "community_waitlist_leads"
+    )
     .insert({
       instagram_username:
         username,
@@ -323,7 +392,8 @@ async function handleComment(value: any) {
 
   if (reserveError) {
     if (
-      reserveError.code === "23505"
+      reserveError.code ===
+      "23505"
     ) {
       console.log(
         "Duplicate comment ignored"
@@ -341,12 +411,12 @@ async function handleComment(value: any) {
   }
 
   try {
-    // ==================================================
-    // SEND PRIVATE REPLY FROM COMMENT
-    // ==================================================
-console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
+    console.log(
+      "ATTEMPTING PRIVATE REPLY TO COMMENT:",
+      commentId
+    );
+
     const result =
-    
       await sendPrivateReply(
         commentId,
         FIRST_DM
@@ -370,13 +440,16 @@ console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
     );
 
     // ==================================================
-    // LINK INSTAGRAM DM ID TO WAITLIST LEAD
+    // CONNECT COMMENT LEAD TO DM USER ID
     // ==================================================
 
     const {
-      error: updateError,
+      error:
+        updateError,
     } = await supabaseAdmin
-      .from("community_waitlist_leads")
+      .from(
+        "community_waitlist_leads"
+      )
       .update({
         instagram_user_id:
           recipientId,
@@ -385,7 +458,8 @@ console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
           "awaiting_confirmation",
 
         updated_at:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
       })
       .eq(
         "source_comment_id",
@@ -411,9 +485,12 @@ console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
       error
     );
 
-    // Delete reservation so a later retry can work.
+    // Remove reservation so it
+    // can be retried later.
     await supabaseAdmin
-      .from("community_waitlist_leads")
+      .from(
+        "community_waitlist_leads"
+      )
       .delete()
       .eq(
         "source_comment_id",
@@ -428,19 +505,26 @@ console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
 // HANDLE INSTAGRAM DM
 // ======================================================
 
-async function handleMessage(event: any) {
+async function handleMessage(
+  event: any
+) {
   const senderId =
     event?.sender?.id;
 
   const message =
     event?.message;
 
-  if (!senderId || !message) {
+  if (
+    !senderId ||
+    !message
+  ) {
     return;
   }
 
-  // Ignore messages sent by our own account.
-  if (message.is_echo) {
+  // Ignore our own messages.
+  if (
+    message.is_echo
+  ) {
     return;
   }
 
@@ -450,25 +534,34 @@ async function handleMessage(event: any) {
   const messageId =
     message.mid;
 
-  if (!text || !messageId) {
+  if (
+    !text ||
+    !messageId
+  ) {
     return;
   }
 
-  console.log("NEW INSTAGRAM DM:", {
-    senderId,
-    text,
-    messageId,
-  });
+  console.log(
+    "NEW INSTAGRAM DM:",
+    {
+      senderId,
+      text,
+      messageId,
+    }
+  );
 
   // ==================================================
-  // LOOK FOR EXISTING WAITLIST LEAD
+  // FIND EXISTING WAITLIST LEAD
   // ==================================================
 
   const {
     data: lead,
-    error: leadError,
+    error:
+      leadError,
   } = await supabaseAdmin
-    .from("community_waitlist_leads")
+    .from(
+      "community_waitlist_leads"
+    )
     .select("*")
     .eq(
       "instagram_user_id",
@@ -486,16 +579,19 @@ async function handleMessage(event: any) {
   }
 
   // ==================================================
-  // NEW DIRECT-DM ENTRY
+  // DIRECT DM "COMMUNITY"
   //
-  // If they're not already in the funnel but they DM
-  // "community" or a close typo, start the waitlist.
+  // Person can enter without commenting.
   // ==================================================
 
   if (!lead) {
-    if (!isCommunityTrigger(text)) {
+    if (
+      !isCommunityTrigger(
+        text
+      )
+    ) {
       console.log(
-        "Normal DM unrelated to community waitlist"
+        "Normal DM unrelated to waitlist"
       );
 
       return;
@@ -506,7 +602,6 @@ async function handleMessage(event: any) {
       text
     );
 
-    // Save incoming DM first for duplicate protection.
     const saved =
       await saveUserMessage(
         senderId,
@@ -516,43 +611,32 @@ async function handleMessage(event: any) {
 
     if (!saved) {
       console.log(
-        "Duplicate direct community DM ignored:",
+        "Duplicate direct DM ignored:",
         messageId
       );
 
       return;
     }
-const instagramUsername =
-  await getInstagramUsername(
-    senderId,
-    messageId
-  );
 
-console.log(
-  "FINAL INSTAGRAM USERNAME:",
-  instagramUsername
-);
-
-console.log(
-  "DIRECT DM USERNAME:",
-  instagramUsername
-);
     const {
-      error: createLeadError,
+      error:
+        createLeadError,
     } = await supabaseAdmin
-      .from("community_waitlist_leads")
+      .from(
+        "community_waitlist_leads"
+      )
       .insert({
         instagram_user_id:
           senderId,
 
-       instagram_username:
-  instagramUsername,
+        // We intentionally collect
+        // this from the user later.
+        instagram_username:
+          null,
 
         status:
           "awaiting_confirmation",
 
-        // Keeps your existing NOT NULL + UNIQUE
-        // source_comment_id column happy.
         source_comment_id:
           `dm:${messageId}`,
 
@@ -563,14 +647,16 @@ console.log(
           text,
 
         updated_at:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
       });
 
-    if (createLeadError) {
-      // Another webhook request may have created
-      // the lead at almost the same time.
+    if (
+      createLeadError
+    ) {
       if (
-        createLeadError.code === "23505"
+        createLeadError.code ===
+        "23505"
       ) {
         console.log(
           "Direct DM lead already exists"
@@ -580,7 +666,7 @@ console.log(
       }
 
       console.error(
-        "Failed to create direct-DM waitlist lead:",
+        "Failed to create direct DM lead:",
         createLeadError
       );
 
@@ -606,12 +692,14 @@ console.log(
   }
 
   // ==================================================
-  // AUTOMATION ALREADY FINISHED
+  // AUTOMATION FINISHED
   // ==================================================
 
   if (
-    lead.status === "waitlisted" ||
-    lead.status === "declined"
+    lead.status ===
+      "waitlisted" ||
+    lead.status ===
+      "declined"
   ) {
     console.log(
       "Waitlist automation already finished for:",
@@ -622,7 +710,8 @@ console.log(
   }
 
   // ==================================================
-  // SAVE MESSAGE + DUPLICATE PROTECTION
+  // SAVE USER MESSAGE
+  // DUPLICATE PROTECTION
   // ==================================================
 
   const saved =
@@ -642,11 +731,71 @@ console.log(
   }
 
   // ==================================================
-  // EMAIL SENT
+  // WAITING FOR INSTAGRAM USERNAME
+  // ==================================================
+
+  if (
+    lead.status ===
+    "awaiting_username"
+  ) {
+    const instagramUsername =
+      extractInstagramUsername(
+        text
+      );
+
+    if (
+      !instagramUsername
+    ) {
+      const reply =
+        "what's your Instagram username bro? just send me your @";
+
+      await sendInstagramMessage(
+        senderId,
+        reply
+      );
+
+      await saveAssistantMessage(
+        senderId,
+        reply
+      );
+
+      return;
+    }
+
+    await saveInstagramUsername(
+      senderId,
+      instagramUsername
+    );
+
+    console.log(
+      "INSTAGRAM USERNAME SAVED:",
+      instagramUsername
+    );
+
+    const reply =
+      "perfect bro, what's the best email to add to the waitlist?";
+
+    await sendInstagramMessage(
+      senderId,
+      reply
+    );
+
+    await saveAssistantMessage(
+      senderId,
+      reply
+    );
+
+    return;
+  }
+
+  // ==================================================
+  // EMAIL PROVIDED
   // ==================================================
 
   const email =
-    extractEmail(text);
+    extractEmail(
+      text
+    );
 
   if (email) {
     await completeWaitlist(
@@ -658,7 +807,7 @@ console.log(
   }
 
   // ==================================================
-  // LOAD CONVERSATION
+  // LOAD CONVERSATION HISTORY
   // ==================================================
 
   const conversation =
@@ -684,7 +833,22 @@ console.log(
   );
 
   // ==================================================
-  // THEY WANT TO JOIN
+  // USER AGREED
+  // ASK FOR USERNAME NEXT
+  // ==================================================
+
+  if (
+    decision.action ===
+    "ask_username"
+  ) {
+    await updateLeadStatus(
+      senderId,
+      "awaiting_username"
+    );
+  }
+
+  // ==================================================
+  // ASK EMAIL
   // ==================================================
 
   if (
@@ -698,7 +862,7 @@ console.log(
   }
 
   // ==================================================
-  // THEY DON'T WANT TO JOIN
+  // DECLINED
   // ==================================================
 
   if (
@@ -712,7 +876,7 @@ console.log(
   }
 
   // ==================================================
-  // SEND RESPONSE
+  // SEND AI RESPONSE
   // ==================================================
 
   await sendInstagramMessage(
@@ -743,7 +907,10 @@ async function generateWaitlistReply(
     }[];
   }
 ): Promise<WaitlistDecision> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (
+    !process.env
+      .OPENAI_API_KEY
+  ) {
     throw new Error(
       "OPENAI_API_KEY is missing"
     );
@@ -761,18 +928,17 @@ async function generateWaitlistReply(
           .OPENAI_MODEL ??
         "gpt-5.6-luna",
 
-      reasoning: {
-        effort: "none",
-      },
-
       store: false,
 
       instructions: `
 You handle Instagram DMs for a calisthenics community waitlist.
 
-The person originally commented on an Instagram Reel or post because they were interested in the community.
+The person originally either:
+- commented "Community" or something similar on an Instagram post/Reel
+OR
+- directly DMed "Community".
 
-The first private message already sent to them was:
+The first message they receive is:
 
 "Hey bro! I saw that you're interested in the calisthenics community. Do you want me to add you to the waitlist for when it releases?"
 
@@ -780,11 +946,16 @@ CURRENT WAITLIST STATUS:
 ${input.status}
 
 MAIN GOAL:
-Get people who genuinely want early access onto the waitlist.
+Help people who genuinely want early access join the waitlist.
 
-If they want to join the waitlist, ask for the best email address to add them.
+WAITLIST SIGNUP ORDER:
 
-Do not ask for unnecessary information.
+1. First confirm that they actually want to join.
+2. Once they clearly agree, ask for their Instagram username.
+3. After their Instagram username has been collected, ask for their email.
+4. After their email is collected, they are on the waitlist.
+
+Do NOT ask for the username and email in the same message.
 
 ABOUT THE COMMUNITY:
 - it is focused on calisthenics
@@ -795,72 +966,79 @@ ABOUT THE COMMUNITY:
 - the planned price is ${communityPrice}
 
 PRICE RULE:
+
 NEVER proactively mention the price.
 
-Only mention the price if the person directly asks:
-- how much it costs
-- whether it is free
-- what the price is
-- whether there is a membership fee
+Only mention the price if the person directly asks things like:
+- how much does it cost
+- is it free
+- what's the price
+- is there a membership fee
 
-If they directly ask, answer honestly using the planned price above.
+If directly asked, honestly say the planned price is ${communityPrice}.
 
 STYLE:
-- natural Instagram DM style
-- casual
+- casual Instagram DM style
 - friendly
 - concise
+- natural
 - "bro" is okay when natural
 - usually 1 or 2 short sentences
-- do not sound corporate
-- do not write huge paragraphs
-- do not use em dashes
-- do not use en dashes
+- don't sound corporate
+- don't write long paragraphs
 - don't pressure them
 - don't use fake urgency
-- respond directly to what they said
+- don't use em dashes
+- don't use en dashes
+- answer their actual question
+- don't pretend to be a specific named person
+- if directly asked whether responses are automated or AI-generated, answer accurately
 
-CONSENT / WAITLIST LOGIC:
+CONSENT LOGIC:
 
-If they clearly want to be added, for example:
-- "yes"
-- "yeah"
-- "yep"
-- "add me"
-- "i'm in"
-- "im down"
-- "sure"
-- "definitely"
-- "put me on it"
-- "sign me up"
-- "100%"
+If they clearly want to join, examples:
+- yes
+- yeah
+- yep
+- sure
+- add me
+- i'm in
+- im in
+- i'm down
+- im down
+- definitely
+- 100%
+- put me on it
+- sign me up
 
-Then:
+If CURRENT WAITLIST STATUS is "awaiting_confirmation" and they clearly agree:
+- action = "ask_username"
+- ask for their Instagram username
+- say they can just send their @
+
+If CURRENT WAITLIST STATUS is "awaiting_username":
+- action = "ask_username"
+- ask for their Instagram username
+
+If CURRENT WAITLIST STATUS is "awaiting_email":
 - action = "ask_email"
-- naturally ask them for the best email for the waitlist
+- ask for the best email for the waitlist
 
 If they clearly do NOT want to join:
 - action = "decline"
-- send a short friendly response
-- do not keep selling
+- give a short friendly response
+- don't continue selling
 
-If they ask questions or are unsure:
+If they are unsure or ask a question:
 - action = "reply"
-- answer their question naturally
-- do NOT ask for their email until they actually show interest
-
-If the status is "awaiting_email":
-- they have already agreed to join
-- if they have not provided an email, naturally ask/remind them for the best email
-- action should normally be "ask_email"
+- answer naturally
+- don't ask for personal details until they actually want to join
 
 IMPORTANT:
-- do not explicitly claim to be a specific named person
-- do not invent personal experiences
-- if directly asked whether the replies are automated or AI-generated, answer accurately
 - never ask for passwords
-- never ask for payment card details
-- never invent prices, offers or launch dates
+- never ask for card details
+- never invent offers
+- never invent launch dates
 `,
 
       input:
@@ -874,10 +1052,12 @@ IMPORTANT:
           })
         ),
 
-      max_output_tokens: 120,
+      max_output_tokens:
+        150,
 
       text: {
-        verbosity: "low",
+        verbosity:
+          "low",
 
         format: {
           type:
@@ -886,7 +1066,8 @@ IMPORTANT:
           name:
             "community_waitlist_decision",
 
-          strict: true,
+          strict:
+            true,
 
           schema: {
             type:
@@ -904,6 +1085,7 @@ IMPORTANT:
 
                 enum: [
                   "reply",
+                  "ask_username",
                   "ask_email",
                   "decline",
                 ],
@@ -922,7 +1104,9 @@ IMPORTANT:
       },
     });
 
-  if (!response.output_text) {
+  if (
+    !response.output_text
+  ) {
     throw new Error(
       "OpenAI returned no output"
     );
@@ -933,183 +1117,118 @@ IMPORTANT:
   ) as WaitlistDecision;
 }
 
-async function getInstagramUsername(
+// ======================================================
+// SAVE USERNAME
+// ======================================================
+
+async function saveInstagramUsername(
   senderId: string,
-  messageId: string
-): Promise<string | null> {
-  const accessToken =
-    process.env.INSTAGRAM_ACCESS_TOKEN;
-
-  const accountId =
-    process.env.INSTAGRAM_ACCOUNT_ID;
-
-  const version =
-    process.env.INSTAGRAM_GRAPH_VERSION ??
-    "v26.0";
-
-  if (!accessToken || !accountId) {
-    console.error(
-      "Missing Instagram credentials for username lookup"
-    );
-
-    return null;
-  }
-
-  // ==================================================
-  // METHOD 1:
-  // LOOK UP THE EXACT MESSAGE
-  // ==================================================
-
-  try {
-    const params =
-      new URLSearchParams({
-        fields:
-          "id,created_time,from,to,message",
-      });
-
-    const response =
-      await fetch(
-        `https://graph.instagram.com/${version}/${messageId}?${params}`,
-        {
-          headers: {
-            Authorization:
-              `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-    const data =
-      await response.json();
-
-    console.log(
-      "MESSAGE USERNAME LOOKUP:",
-      JSON.stringify(data)
-    );
-
-    if (
-      response.ok &&
-      data?.from?.username
-    ) {
-      return data.from.username;
-    }
-  } catch (error) {
-    console.error(
-      "Message username lookup failed:",
-      error
-    );
-  }
-
-  // ==================================================
-  // METHOD 2:
-  // FIND CONVERSATION USING SENDER IGSID
-  // ==================================================
-
-  try {
-    const conversationParams =
-      new URLSearchParams({
-        user_id:
-          senderId,
-      });
-
-    const conversationResponse =
-      await fetch(
-        `https://graph.instagram.com/${version}/${accountId}/conversations?${conversationParams}`,
-        {
-          headers: {
-            Authorization:
-              `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-    const conversationData =
-      await conversationResponse.json();
-
-    console.log(
-      "CONVERSATION LOOKUP:",
-      JSON.stringify(
-        conversationData
+  username: string
+) {
+  const cleaned =
+    username
+      .replace(
+        /^@/,
+        ""
       )
+      .trim();
+
+  const {
+    error,
+  } = await supabaseAdmin
+    .from(
+      "community_waitlist_leads"
+    )
+    .update({
+      instagram_username:
+        cleaned,
+
+      status:
+        "awaiting_email",
+
+      updated_at:
+        new Date()
+          .toISOString(),
+    })
+    .eq(
+      "instagram_user_id",
+      senderId
     );
 
-    if (
-      !conversationResponse.ok
-    ) {
-      return null;
-    }
-
-    const conversationId =
-      conversationData
-        ?.data?.[0]?.id;
-
-    if (!conversationId) {
-      console.error(
-        "No conversation found for:",
-        senderId
-      );
-
-      return null;
-    }
-
-    // ==================================================
-    // GET RECENT MESSAGES + THEIR SENDERS
-    // ==================================================
-
-    const messageParams =
-      new URLSearchParams({
-        fields:
-          "messages.limit(20){from,to}",
-      });
-
-    const messagesResponse =
-      await fetch(
-        `https://graph.instagram.com/${version}/${conversationId}?${messageParams}`,
-        {
-          headers: {
-            Authorization:
-              `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-    const messagesData =
-      await messagesResponse.json();
-
-    console.log(
-      "CONVERSATION MESSAGES:",
-      JSON.stringify(
-        messagesData
-      )
-    );
-
-    if (!messagesResponse.ok) {
-      return null;
-    }
-
-    const messages =
-      messagesData?.messages
-        ?.data ?? [];
-
-    for (const item of messages) {
-      if (
-        String(item?.from?.id) ===
-          String(senderId) &&
-        item?.from?.username
-      ) {
-        return item.from.username;
-      }
-    }
-
-    return null;
-  } catch (error) {
+  if (error) {
     console.error(
-      "Conversation username lookup failed:",
+      "Instagram username save failed:",
       error
     );
 
-    return null;
+    throw error;
   }
 }
+
+// ======================================================
+// EXTRACT INSTAGRAM USERNAME
+// ======================================================
+
+function extractInstagramUsername(
+  text: string
+): string | null {
+  // Don't mistake an email for an IG username.
+  if (
+    extractEmail(text)
+  ) {
+    return null;
+  }
+
+  const trimmed =
+    text.trim();
+
+  // Example:
+  // @aaravb_sw
+
+  const atMatch =
+    trimmed.match(
+      /@([A-Za-z0-9._]{1,30})/
+    );
+
+  if (
+    atMatch?.[1]
+  ) {
+    return atMatch[1];
+  }
+
+  // Examples:
+  // username is aaravb_sw
+  // instagram: aaravb_sw
+  // ig is aaravb_sw
+
+  const phraseMatch =
+    trimmed.match(
+      /(?:instagram|username|user|ig)\s*(?:username\s*)?(?:is|:|=)?\s*@?([A-Za-z0-9._]{1,30})/i
+    );
+
+  if (
+    phraseMatch?.[1]
+  ) {
+    return phraseMatch[1];
+  }
+
+  // Just username:
+  // aaravb_sw
+
+  if (
+    /^@?[A-Za-z0-9._]{1,30}$/.test(
+      trimmed
+    )
+  ) {
+    return trimmed.replace(
+      /^@/,
+      ""
+    );
+  }
+
+  return null;
+}
+
 // ======================================================
 // COMPLETE WAITLIST
 // ======================================================
@@ -1121,7 +1240,9 @@ async function completeWaitlist(
   const {
     error,
   } = await supabaseAdmin
-    .from("community_waitlist_leads")
+    .from(
+      "community_waitlist_leads"
+    )
     .update({
       email:
         email.toLowerCase(),
@@ -1130,7 +1251,8 @@ async function completeWaitlist(
         "waitlisted",
 
       updated_at:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     })
     .eq(
       "instagram_user_id",
@@ -1169,7 +1291,7 @@ async function completeWaitlist(
 }
 
 // ======================================================
-// LOAD CONVERSATION MEMORY
+// LOAD CONVERSATION
 // ======================================================
 
 async function getConversation(
@@ -1192,7 +1314,8 @@ async function getConversation(
     .order(
       "created_at",
       {
-        ascending: false,
+        ascending:
+          false,
       }
     )
     .limit(20);
@@ -1256,9 +1379,9 @@ async function saveUserMessage(
     return true;
   }
 
-  // PostgreSQL unique constraint violation
   if (
-    error.code === "23505"
+    error.code ===
+    "23505"
   ) {
     return false;
   }
@@ -1305,7 +1428,7 @@ async function saveAssistantMessage(
 }
 
 // ======================================================
-// UPDATE WAITLIST STATUS
+// UPDATE LEAD STATUS
 // ======================================================
 
 async function updateLeadStatus(
@@ -1322,7 +1445,8 @@ async function updateLeadStatus(
       status,
 
       updated_at:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     })
     .eq(
       "instagram_user_id",
@@ -1356,7 +1480,7 @@ function extractEmail(
 }
 
 // ======================================================
-// COMMUNITY TRIGGER MATCHING
+// COMMUNITY TRIGGER
 // ======================================================
 
 function isCommunityTrigger(
@@ -1371,29 +1495,20 @@ function isCommunityTrigger(
   const target =
     "community";
 
-  for (const word of words) {
-    // Exact:
-    // community
+  for (
+    const word of words
+  ) {
     if (
       word === target
     ) {
       return true;
     }
 
-    // Prevent tiny random words being fuzzy-matched.
     if (
       word.length < 6
     ) {
       continue;
     }
-
-    // Common typos such as:
-    //
-    // comunity
-    // communty
-    // commmunity
-    // communityy
-    // comunty
 
     if (
       levenshteinDistance(
@@ -1423,7 +1538,6 @@ function levenshteinDistance(
           length:
             b.length + 1,
         },
-
         () =>
           Array(
             a.length + 1
@@ -1435,7 +1549,8 @@ function levenshteinDistance(
     i <= b.length;
     i++
   ) {
-    matrix[i][0] = i;
+    matrix[i][0] =
+      i;
   }
 
   for (
@@ -1443,7 +1558,8 @@ function levenshteinDistance(
     j <= a.length;
     j++
   ) {
-    matrix[0][j] = j;
+    matrix[0][j] =
+      j;
   }
 
   for (
@@ -1495,7 +1611,7 @@ function levenshteinDistance(
 }
 
 // ======================================================
-// PRIVATE DM FROM COMMENT
+// PRIVATE REPLY FROM COMMENT
 // ======================================================
 
 async function sendPrivateReply(
@@ -1531,7 +1647,8 @@ async function sendPrivateReply(
     await fetch(
       `https://graph.instagram.com/${version}/${accountId}/messages`,
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Authorization:
@@ -1558,7 +1675,9 @@ async function sendPrivateReply(
   const data =
     await response.json();
 
-  if (!response.ok) {
+  if (
+    !response.ok
+  ) {
     console.error(
       "Instagram private reply error:",
       data
@@ -1609,7 +1728,8 @@ async function sendInstagramMessage(
     await fetch(
       `https://graph.instagram.com/${version}/${accountId}/messages`,
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Authorization:
@@ -1636,7 +1756,9 @@ async function sendInstagramMessage(
   const data =
     await response.json();
 
-  if (!response.ok) {
+  if (
+    !response.ok
+  ) {
     console.error(
       "Instagram DM error:",
       data
@@ -1651,7 +1773,7 @@ async function sendInstagramMessage(
 }
 
 // ======================================================
-// VERIFY META / INSTAGRAM WEBHOOK SIGNATURE
+// VERIFY INSTAGRAM WEBHOOK SIGNATURE
 // ======================================================
 
 function verifyInstagramSignature(
@@ -1690,14 +1812,22 @@ function verifyInstagramSignature(
         "sha256",
         appSecret
       )
-      .update(rawBody)
-      .digest("hex");
+      .update(
+        rawBody
+      )
+      .digest(
+        "hex"
+      );
 
   const actualBuffer =
-    Buffer.from(signature);
+    Buffer.from(
+      signature
+    );
 
   const expectedBuffer =
-    Buffer.from(expected);
+    Buffer.from(
+      expected
+    );
 
   if (
     actualBuffer.length !==
