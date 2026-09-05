@@ -464,7 +464,15 @@ async function handleMessage(event: any) {
 
       return;
     }
+const instagramUsername =
+  await getInstagramUsernameFromMessage(
+    messageId
+  );
 
+console.log(
+  "DIRECT DM USERNAME:",
+  instagramUsername
+);
     const {
       error: createLeadError,
     } = await supabaseAdmin
@@ -473,8 +481,8 @@ async function handleMessage(event: any) {
         instagram_user_id:
           senderId,
 
-        instagram_username:
-          null,
+       instagram_username:
+  instagramUsername,
 
         status:
           "awaiting_confirmation",
@@ -861,6 +869,61 @@ IMPORTANT:
   ) as WaitlistDecision;
 }
 
+async function getInstagramUsernameFromMessage(
+  messageId: string
+): Promise<string | null> {
+  const accessToken =
+    process.env.INSTAGRAM_ACCESS_TOKEN;
+
+  const version =
+    process.env.INSTAGRAM_GRAPH_VERSION ??
+    "v26.0";
+
+  if (!accessToken) {
+    console.error(
+      "INSTAGRAM_ACCESS_TOKEN is missing"
+    );
+
+    return null;
+  }
+
+  try {
+    const response =
+      await fetch(
+        `https://graph.instagram.com/${version}/${messageId}?fields=from`,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      console.error(
+        "Failed to get Instagram message info:",
+        data
+      );
+
+      return null;
+    }
+
+    return (
+      data?.from?.username ??
+      null
+    );
+  } catch (error) {
+    console.error(
+      "Instagram username lookup failed:",
+      error
+    );
+
+    return null;
+  }
+}
 // ======================================================
 // COMPLETE WAITLIST
 // ======================================================
