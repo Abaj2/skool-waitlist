@@ -84,27 +84,38 @@ export async function POST(req: NextRequest) {
     }
 
     for (const entry of body.entry ?? []) {
-      // ==================================================
-      // COMMENT WEBHOOK
-      // ==================================================
+  console.log(
+    "ENTRY DEBUG:",
+    JSON.stringify(entry, null, 2)
+  );
 
-      if (
-        entry.field === "comments" &&
-        entry.value
-      ) {
-        await handleComment(entry.value);
+  console.log(
+    "ENTRY FIELD:",
+    entry.field
+  );
 
-        continue;
-      }
+  console.log(
+    "ENTRY VALUE:",
+    JSON.stringify(entry.value, null, 2)
+  );
 
-      // ==================================================
-      // INSTAGRAM DM WEBHOOK
-      // ==================================================
+  if (
+    entry.field === "comments" &&
+    entry.value
+  ) {
+    console.log(
+      "COMMENT WEBHOOK DETECTED"
+    );
 
-      for (const event of entry.messaging ?? []) {
-        await handleMessage(event);
-      }
-    }
+    await handleComment(entry.value);
+
+    continue;
+  }
+
+  for (const event of entry.messaging ?? []) {
+    await handleMessage(event);
+  }
+}
 
     return NextResponse.json({
       received: true,
@@ -131,6 +142,10 @@ export async function POST(req: NextRequest) {
 // ======================================================
 
 async function handleComment(value: any) {
+  console.log(
+  "HANDLE COMMENT CALLED:",
+  JSON.stringify(value, null, 2)
+);
   const commentId = value?.id;
 
   const username =
@@ -287,8 +302,9 @@ async function handleComment(value: any) {
     // ==================================================
     // SEND PRIVATE REPLY FROM COMMENT
     // ==================================================
-
+console.log( "ATTEMPTING PRIVATE REPLY TO COMMENT:", commentId );
     const result =
+    
       await sendPrivateReply(
         commentId,
         FIRST_DM
