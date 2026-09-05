@@ -83,40 +83,82 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    for (const entry of body.entry ?? []) {
+   for (const entry of body.entry ?? []) {
   console.log(
     "ENTRY DEBUG:",
     JSON.stringify(entry, null, 2)
   );
 
-  console.log(
-    "ENTRY FIELD:",
-    entry.field
-  );
+  let commentHandled = false;
 
-  console.log(
-    "ENTRY VALUE:",
-    JSON.stringify(entry.value, null, 2)
-  );
+  // ==================================================
+  // FORMAT 1:
+  // Instagram comment webhook documented format
+  // entry.field + entry.value
+  // ==================================================
 
   if (
     entry.field === "comments" &&
     entry.value
   ) {
     console.log(
-      "COMMENT WEBHOOK DETECTED"
+      "COMMENT WEBHOOK DETECTED: direct format"
     );
 
     await handleComment(entry.value);
 
-    continue;
+    commentHandled = true;
   }
+
+  // ==================================================
+  // FORMAT 2:
+  // Some webhook payloads can wrap field/value
+  // inside entry.changes[]
+  // ==================================================
+
+  if (!commentHandled) {
+    for (const change of entry.changes ?? []) {
+      console.log(
+        "CHANGE FIELD:",
+        change?.field
+      );
+
+      console.log(
+        "CHANGE VALUE:",
+        JSON.stringify(
+          change?.value,
+          null,
+          2
+        )
+      );
+
+      if (
+        change?.field === "comments" &&
+        change?.value
+      ) {
+        console.log(
+          "COMMENT WEBHOOK DETECTED: changes format"
+        );
+
+        await handleComment(
+          change.value
+        );
+
+        commentHandled = true;
+
+        break;
+      }
+    }
+  }
+
+  // ==================================================
+  // INSTAGRAM DMS
+  // ==================================================
 
   for (const event of entry.messaging ?? []) {
     await handleMessage(event);
   }
 }
-
     return NextResponse.json({
       received: true,
     });
