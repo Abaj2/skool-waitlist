@@ -1,37 +1,45 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
 import crypto from "crypto";
-import OpenAI from "openai";
 
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  supabaseAdmin,
+} from "@/lib/supabaseAdmin";
 
-export const runtime = "nodejs";
+export const runtime =
+  "nodejs";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// ======================================================
+// COMMUNITY SETTINGS
+// ======================================================
 
-const FIRST_DM =
-  "Hey bro! I saw that you're interested in the calisthenics community. Do you want me to add you to the waitlist for when it releases?";
+const COMMUNITY_CHANNEL_URL =
+  process.env
+    .COMMUNITY_CHANNEL_URL ??
+  "https://www.instagram.com/channel/TGk3f35BqQ7yrElw/";
 
-type WaitlistDecision = {
-  reply: string;
-  action:
-    | "reply"
-    | "ask_username"
-    | "ask_email"
-    | "decline";
-};
+const COMMUNITY_MESSAGE =
+  `yo bro, here's the link to join the Calisthenics New Gen community 👇\n\n${COMMUNITY_CHANNEL_URL}`;
 
 // ======================================================
 // GET
 // META WEBHOOK VERIFICATION
 // ======================================================
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
+export async function GET(
+  req: NextRequest
+) {
+  const {
+    searchParams,
+  } = new URL(req.url);
 
   const mode =
-    searchParams.get("hub.mode");
+    searchParams.get(
+      "hub.mode"
+    );
 
   const token =
     searchParams.get(
@@ -85,6 +93,10 @@ export async function POST(
     const rawBody =
       await req.text();
 
+    // ==================================================
+    // VERIFY INSTAGRAM SIGNATURE
+    // ==================================================
+
     if (
       !verifyInstagramSignature(
         req,
@@ -107,7 +119,9 @@ export async function POST(
     }
 
     const body =
-      JSON.parse(rawBody);
+      JSON.parse(
+        rawBody
+      );
 
     console.log(
       "INSTAGRAM EVENT:",
@@ -127,25 +141,22 @@ export async function POST(
       });
     }
 
+    // ==================================================
+    // PROCESS ENTRIES
+    // ==================================================
+
     for (
       const entry of
       body.entry ?? []
     ) {
-      console.log(
-        "ENTRY DEBUG:",
-        JSON.stringify(
-          entry,
-          null,
-          2
-        )
-      );
-
       let commentHandled =
         false;
 
       // ==================================================
       // COMMENT FORMAT 1
-      // entry.field + entry.value
+      //
+      // entry.field
+      // entry.value
       // ==================================================
 
       if (
@@ -167,28 +178,20 @@ export async function POST(
 
       // ==================================================
       // COMMENT FORMAT 2
+      //
       // entry.changes[]
+      //
+      // This is the format that fixed your live webhook
+      // previously, so we are keeping both formats.
       // ==================================================
 
-      if (!commentHandled) {
+      if (
+        !commentHandled
+      ) {
         for (
           const change of
           entry.changes ?? []
         ) {
-          console.log(
-            "CHANGE FIELD:",
-            change?.field
-          );
-
-          console.log(
-            "CHANGE VALUE:",
-            JSON.stringify(
-              change?.value,
-              null,
-              2
-            )
-          );
-
           if (
             change?.field ===
               "comments" &&
@@ -252,29 +255,15 @@ export async function POST(
 async function handleComment(
   value: any
 ) {
-  console.log(
-    "HANDLE COMMENT CALLED:",
-    JSON.stringify(
-      value,
-      null,
-      2
-    )
-  );
-
   const commentId =
     value?.id;
 
-  const username =
-    value?.from?.username ??
-    value?.username ??
-    null;
-
   const text =
-    value?.text ?? "";
+    value?.text ??
+    "";
 
-  const mediaId =
-    value?.media?.id ??
-    value?.media_id ??
+  const instagramUserId =
+    value?.from?.id ??
     null;
 
   if (
@@ -292,14 +281,13 @@ async function handleComment(
     "NEW COMMENT:",
     {
       commentId,
-      username,
       text,
-      mediaId,
+      instagramUserId,
     }
   );
 
   // ==================================================
-  // DOES COMMENT MATCH COMMUNITY?
+  // DOES IT MATCH COMMUNITY?
   // ==================================================
 
   if (
@@ -320,91 +308,51 @@ async function handleComment(
   );
 
   // ==================================================
-  // CHECK EXACT COMMENT
+  // IF WE KNOW THE USER ID, CHECK WHETHER THEY
+  // ALREADY RECEIVED THE LINK.
   // ==================================================
 
-  const {
-    data:
-      existingComment,
-    error:
-      existingCommentError,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
-    )
-    .select(
-      "id, status"
-    )
-    .eq(
-      "source_comment_id",
-      commentId
-    )
-    .maybeSingle();
-
   if (
-    existingCommentError
-  ) {
-    console.error(
-      "Comment lookup failed:",
-      existingCommentError
-    );
-
-    return;
-  }
-
-  if (
-    existingComment
+    instagramUserId &&
+    (await hasAlreadyReceivedLink(
+      instagramUserId
+    ))
   ) {
     console.log(
-      "Comment already processed"
+      "User already received community link:",
+      instagramUserId
     );
 
     return;
   }
 
+  const sourceId =
+    `comment:${commentId}`;
+
   // ==================================================
-  // RESERVE COMMENT
+  // RESERVE EVENT
+  //
+  // Prevents Meta delivering the same webhook twice
+  // and causing two DMs.
   // ==================================================
 
-  const {
-    error:
-      reserveError,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
-    )
-    .insert({
-      instagram_username:
-        username,
+  const reserved =
+    await reserveDelivery({
+      sourceType:
+        "comment",
 
-      status:
-        "pending",
+      sourceId,
 
-      source_comment_id:
-        commentId,
+      instagramUserId,
 
-      source_media_id:
-        mediaId,
-
-      source_comment_text:
+      sourceText:
         text,
     });
 
-  if (reserveError) {
-    if (
-      reserveError.code ===
-      "23505"
-    ) {
-      console.log(
-        "Duplicate comment ignored"
-      );
-
-      return;
-    }
-
-    console.error(
-      "Failed to reserve comment:",
-      reserveError
+  if (!reserved) {
+    console.log(
+      "Comment already processed:",
+      commentId
     );
 
     return;
@@ -412,97 +360,48 @@ async function handleComment(
 
   try {
     console.log(
-      "ATTEMPTING PRIVATE REPLY TO COMMENT:",
+      "SENDING COMMUNITY LINK FROM COMMENT:",
       commentId
     );
 
     const result =
       await sendPrivateReply(
         commentId,
-        FIRST_DM
+        COMMUNITY_MESSAGE
       );
 
     const recipientId =
-      result?.recipient_id;
+      result?.recipient_id ??
+      instagramUserId ??
+      null;
 
-    if (!recipientId) {
-      throw new Error(
-        "Instagram did not return recipient_id"
-      );
-    }
+    await markDeliverySent(
+      sourceId,
+      recipientId
+    );
 
     console.log(
-      "PRIVATE REPLY SENT:",
+      "COMMUNITY LINK SENT FROM COMMENT:",
       {
-        username,
+        commentId,
         recipientId,
       }
     );
-
-    // ==================================================
-    // CONNECT COMMENT LEAD TO DM USER ID
-    // ==================================================
-
-    const {
-      error:
-        updateError,
-    } = await supabaseAdmin
-      .from(
-        "community_waitlist_leads"
-      )
-      .update({
-        instagram_user_id:
-          recipientId,
-
-        status:
-          "awaiting_confirmation",
-
-        updated_at:
-          new Date()
-            .toISOString(),
-      })
-      .eq(
-        "source_comment_id",
-        commentId
-      );
-
-    if (updateError) {
-      console.error(
-        "Failed to update waitlist lead:",
-        updateError
-      );
-
-      return;
-    }
-
-    await saveAssistantMessage(
-      recipientId,
-      FIRST_DM
-    );
   } catch (error) {
     console.error(
-      "Private reply failed:",
+      "Community private reply failed:",
       error
     );
 
-    // Remove reservation so it
-    // can be retried later.
-    await supabaseAdmin
-      .from(
-        "community_waitlist_leads"
-      )
-      .delete()
-      .eq(
-        "source_comment_id",
-        commentId
-      );
-
-    throw error;
+    // Allow future retry.
+    await removeDeliveryReservation(
+      sourceId
+    );
   }
 }
 
 // ======================================================
-// HANDLE INSTAGRAM DM
+// HANDLE DIRECT INSTAGRAM DM
 // ======================================================
 
 async function handleMessage(
@@ -521,7 +420,7 @@ async function handleMessage(
     return;
   }
 
-  // Ignore our own messages.
+  // Ignore messages sent by our own account.
   if (
     message.is_echo
   ) {
@@ -551,834 +450,193 @@ async function handleMessage(
   );
 
   // ==================================================
-  // FIND EXISTING WAITLIST LEAD
-  // ==================================================
-
-  const {
-    data: lead,
-    error:
-      leadError,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
-    )
-    .select("*")
-    .eq(
-      "instagram_user_id",
-      senderId
-    )
-    .maybeSingle();
-
-  if (leadError) {
-    console.error(
-      "Waitlist lead lookup failed:",
-      leadError
-    );
-
-    return;
-  }
-
-  // ==================================================
-  // DIRECT DM "COMMUNITY"
-  //
-  // Person can enter without commenting.
-  // ==================================================
-
-  if (!lead) {
-    if (
-      !isCommunityTrigger(
-        text
-      )
-    ) {
-      console.log(
-        "Normal DM unrelated to waitlist"
-      );
-
-      return;
-    }
-
-    console.log(
-      "DIRECT COMMUNITY DM DETECTED:",
-      text
-    );
-
-    const saved =
-      await saveUserMessage(
-        senderId,
-        text,
-        messageId
-      );
-
-    if (!saved) {
-      console.log(
-        "Duplicate direct DM ignored:",
-        messageId
-      );
-
-      return;
-    }
-
-    const {
-      error:
-        createLeadError,
-    } = await supabaseAdmin
-      .from(
-        "community_waitlist_leads"
-      )
-      .insert({
-        instagram_user_id:
-          senderId,
-
-        // We intentionally collect
-        // this from the user later.
-        instagram_username:
-          null,
-
-        status:
-          "awaiting_confirmation",
-
-        source_comment_id:
-          `dm:${messageId}`,
-
-        source_media_id:
-          null,
-
-        source_comment_text:
-          text,
-
-        updated_at:
-          new Date()
-            .toISOString(),
-      });
-
-    if (
-      createLeadError
-    ) {
-      if (
-        createLeadError.code ===
-        "23505"
-      ) {
-        console.log(
-          "Direct DM lead already exists"
-        );
-
-        return;
-      }
-
-      console.error(
-        "Failed to create direct DM lead:",
-        createLeadError
-      );
-
-      return;
-    }
-
-    await sendInstagramMessage(
-      senderId,
-      FIRST_DM
-    );
-
-    await saveAssistantMessage(
-      senderId,
-      FIRST_DM
-    );
-
-    console.log(
-      "DIRECT DM WAITLIST FUNNEL STARTED:",
-      senderId
-    );
-
-    return;
-  }
-
-  // ==================================================
-  // AUTOMATION FINISHED
+  // ONLY RESPOND TO COMMUNITY
   // ==================================================
 
   if (
-    lead.status ===
-      "waitlisted" ||
-    lead.status ===
-      "declined"
+    !isCommunityTrigger(
+      text
+    )
   ) {
     console.log(
-      "Waitlist automation already finished for:",
+      "DM unrelated to COMMUNITY"
+    );
+
+    return;
+  }
+
+  console.log(
+    "DIRECT COMMUNITY DM DETECTED:",
+    text
+  );
+
+  // ==================================================
+  // DON'T SEND THE LINK AGAIN IF THEY ALREADY GOT IT
+  // ==================================================
+
+  if (
+    await hasAlreadyReceivedLink(
+      senderId
+    )
+  ) {
+    console.log(
+      "User already received community link:",
       senderId
     );
 
     return;
   }
 
+  const sourceId =
+    `dm:${messageId}`;
+
   // ==================================================
-  // SAVE USER MESSAGE
   // DUPLICATE PROTECTION
   // ==================================================
 
-  const saved =
-    await saveUserMessage(
-      senderId,
-      text,
-      messageId
-    );
+  const reserved =
+    await reserveDelivery({
+      sourceType:
+        "dm",
 
-  if (!saved) {
+      sourceId,
+
+      instagramUserId:
+        senderId,
+
+      sourceText:
+        text,
+    });
+
+  if (!reserved) {
     console.log(
-      "Duplicate Instagram message ignored:",
+      "DM already processed:",
       messageId
     );
 
     return;
   }
 
-  // ==================================================
-  // WAITING FOR INSTAGRAM USERNAME
-  // ==================================================
-
-  if (
-    lead.status ===
-    "awaiting_username"
-  ) {
-    const instagramUsername =
-      extractInstagramUsername(
-        text
-      );
-
-    if (
-      !instagramUsername
-    ) {
-      const reply =
-        "what's your Instagram username bro? just send me your @";
-
-      await sendInstagramMessage(
-        senderId,
-        reply
-      );
-
-      await saveAssistantMessage(
-        senderId,
-        reply
-      );
-
-      return;
-    }
-
-    await saveInstagramUsername(
-      senderId,
-      instagramUsername
-    );
-
-    console.log(
-      "INSTAGRAM USERNAME SAVED:",
-      instagramUsername
-    );
-
-    const reply =
-      "perfect bro, what's the best email to add to the waitlist?";
-
+  try {
     await sendInstagramMessage(
       senderId,
-      reply
+      COMMUNITY_MESSAGE
     );
 
-    await saveAssistantMessage(
-      senderId,
-      reply
-    );
-
-    return;
-  }
-
-  // ==================================================
-  // EMAIL PROVIDED
-  // ==================================================
-
-  const email =
-    extractEmail(
-      text
-    );
-
-  if (email) {
-    await completeWaitlist(
-      senderId,
-      email
-    );
-
-    return;
-  }
-
-  // ==================================================
-  // LOAD CONVERSATION HISTORY
-  // ==================================================
-
-  const conversation =
-    await getConversation(
+    await markDeliverySent(
+      sourceId,
       senderId
     );
 
-  // ==================================================
-  // AI DECIDES NEXT RESPONSE
-  // ==================================================
-
-  const decision =
-    await generateWaitlistReply({
-      status:
-        lead.status,
-
-      conversation,
-    });
-
-  console.log(
-    "WAITLIST AI DECISION:",
-    decision
-  );
-
-  // ==================================================
-  // USER AGREED
-  // ASK FOR USERNAME NEXT
-  // ==================================================
-
-  if (
-    decision.action ===
-    "ask_username"
-  ) {
-    await updateLeadStatus(
-      senderId,
-      "awaiting_username"
-    );
-  }
-
-  // ==================================================
-  // ASK EMAIL
-  // ==================================================
-
-  if (
-    decision.action ===
-    "ask_email"
-  ) {
-    await updateLeadStatus(
-      senderId,
-      "awaiting_email"
-    );
-  }
-
-  // ==================================================
-  // DECLINED
-  // ==================================================
-
-  if (
-    decision.action ===
-    "decline"
-  ) {
-    await updateLeadStatus(
-      senderId,
-      "declined"
-    );
-  }
-
-  // ==================================================
-  // SEND AI RESPONSE
-  // ==================================================
-
-  await sendInstagramMessage(
-    senderId,
-    decision.reply
-  );
-
-  await saveAssistantMessage(
-    senderId,
-    decision.reply
-  );
-}
-
-// ======================================================
-// OPENAI WAITLIST CONVERSATION
-// ======================================================
-
-async function generateWaitlistReply(
-  input: {
-    status: string;
-
-    conversation: {
-      role:
-        | "user"
-        | "assistant";
-
-      content: string;
-    }[];
-  }
-): Promise<WaitlistDecision> {
-  if (
-    !process.env
-      .OPENAI_API_KEY
-  ) {
-    throw new Error(
-      "OPENAI_API_KEY is missing"
-    );
-  }
-
-  const communityPrice =
-    process.env
-      .COMMUNITY_PRICE_TEXT ??
-    "$10/month";
-
-  const response =
-    await openai.responses.create({
-      model:
-        process.env
-          .OPENAI_MODEL ??
-        "gpt-5.6-luna",
-
-      store: false,
-
-      instructions: `
-You handle Instagram DMs for a calisthenics community waitlist.
-
-The person originally either:
-- commented "Community" or something similar on an Instagram post/Reel
-OR
-- directly DMed "Community".
-
-The first message they receive is:
-
-"Hey bro! I saw that you're interested in the calisthenics community. Do you want me to add you to the waitlist for when it releases?"
-
-CURRENT WAITLIST STATUS:
-${input.status}
-
-MAIN GOAL:
-Help people who genuinely want early access join the waitlist.
-
-WAITLIST SIGNUP ORDER:
-
-1. First confirm that they actually want to join.
-2. Once they clearly agree, ask for their Instagram username.
-3. After their Instagram username has been collected, ask for their email.
-4. After their email is collected, they are on the waitlist.
-
-Do NOT ask for the username and email in the same message.
-
-ABOUT THE COMMUNITY:
-- it is focused on calisthenics
-- it will help people learn and improve at calisthenics
-- it has not launched yet
-- the waitlist is for people who want to know when it releases
-- do not invent a release date
-- the planned price is ${communityPrice}
-
-PRICE RULE:
-
-NEVER proactively mention the price.
-
-Only mention the price if the person directly asks things like:
-- how much does it cost
-- is it free
-- what's the price
-- is there a membership fee
-
-If directly asked, honestly say the planned price is ${communityPrice}.
-
-STYLE:
-- casual Instagram DM style
-- friendly
-- concise
-- natural
-- "bro" is okay when natural
-- usually 1 or 2 short sentences
-- don't sound corporate
-- don't write long paragraphs
-- don't pressure them
-- don't use fake urgency
-- don't use em dashes
-- don't use en dashes
-- answer their actual question
-- don't pretend to be a specific named person
-- if directly asked whether responses are automated or AI-generated, answer accurately
-
-CONSENT LOGIC:
-
-If they clearly want to join, examples:
-- yes
-- yeah
-- yep
-- sure
-- add me
-- i'm in
-- im in
-- i'm down
-- im down
-- definitely
-- 100%
-- put me on it
-- sign me up
-
-If CURRENT WAITLIST STATUS is "awaiting_confirmation" and they clearly agree:
-- action = "ask_username"
-- ask for their Instagram username
-- say they can just send their @
-
-If CURRENT WAITLIST STATUS is "awaiting_username":
-- action = "ask_username"
-- ask for their Instagram username
-
-If CURRENT WAITLIST STATUS is "awaiting_email":
-- action = "ask_email"
-- ask for the best email for the waitlist
-
-If they clearly do NOT want to join:
-- action = "decline"
-- give a short friendly response
-- don't continue selling
-
-If they are unsure or ask a question:
-- action = "reply"
-- answer naturally
-- don't ask for personal details until they actually want to join
-
-IMPORTANT:
-- never ask for passwords
-- never ask for card details
-- never invent offers
-- never invent launch dates
-`,
-
-      input:
-        input.conversation.map(
-          (message) => ({
-            role:
-              message.role,
-
-            content:
-              message.content,
-          })
-        ),
-
-      max_output_tokens:
-        150,
-
-      text: {
-        verbosity:
-          "low",
-
-        format: {
-          type:
-            "json_schema",
-
-          name:
-            "community_waitlist_decision",
-
-          strict:
-            true,
-
-          schema: {
-            type:
-              "object",
-
-            properties: {
-              reply: {
-                type:
-                  "string",
-              },
-
-              action: {
-                type:
-                  "string",
-
-                enum: [
-                  "reply",
-                  "ask_username",
-                  "ask_email",
-                  "decline",
-                ],
-              },
-            },
-
-            required: [
-              "reply",
-              "action",
-            ],
-
-            additionalProperties:
-              false,
-          },
-        },
-      },
-    });
-
-  if (
-    !response.output_text
-  ) {
-    throw new Error(
-      "OpenAI returned no output"
-    );
-  }
-
-  return JSON.parse(
-    response.output_text
-  ) as WaitlistDecision;
-}
-
-// ======================================================
-// SAVE USERNAME
-// ======================================================
-
-async function saveInstagramUsername(
-  senderId: string,
-  username: string
-) {
-  const cleaned =
-    username
-      .replace(
-        /^@/,
-        ""
-      )
-      .trim();
-
-  const {
-    error,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
-    )
-    .update({
-      instagram_username:
-        cleaned,
-
-      status:
-        "awaiting_email",
-
-      updated_at:
-        new Date()
-          .toISOString(),
-    })
-    .eq(
-      "instagram_user_id",
+    console.log(
+      "COMMUNITY LINK SENT FROM DM:",
       senderId
     );
-
-  if (error) {
+  } catch (error) {
     console.error(
-      "Instagram username save failed:",
+      "Community DM failed:",
       error
     );
 
-    throw error;
+    await removeDeliveryReservation(
+      sourceId
+    );
   }
 }
 
 // ======================================================
-// EXTRACT INSTAGRAM USERNAME
+// CHECK IF PERSON ALREADY RECEIVED LINK
 // ======================================================
 
-function extractInstagramUsername(
-  text: string
-): string | null {
-  // Don't mistake an email for an IG username.
-  if (
-    extractEmail(text)
-  ) {
-    return null;
-  }
-
-  const trimmed =
-    text.trim();
-
-  // Example:
-  // @aaravb_sw
-
-  const atMatch =
-    trimmed.match(
-      /@([A-Za-z0-9._]{1,30})/
-    );
-
-  if (
-    atMatch?.[1]
-  ) {
-    return atMatch[1];
-  }
-
-  // Examples:
-  // username is aaravb_sw
-  // instagram: aaravb_sw
-  // ig is aaravb_sw
-
-  const phraseMatch =
-    trimmed.match(
-      /(?:instagram|username|user|ig)\s*(?:username\s*)?(?:is|:|=)?\s*@?([A-Za-z0-9._]{1,30})/i
-    );
-
-  if (
-    phraseMatch?.[1]
-  ) {
-    return phraseMatch[1];
-  }
-
-  // Just username:
-  // aaravb_sw
-
-  if (
-    /^@?[A-Za-z0-9._]{1,30}$/.test(
-      trimmed
-    )
-  ) {
-    return trimmed.replace(
-      /^@/,
-      ""
-    );
-  }
-
-  return null;
-}
-
-// ======================================================
-// COMPLETE WAITLIST
-// ======================================================
-
-async function completeWaitlist(
-  senderId: string,
-  email: string
-) {
-  const {
-    error,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
-    )
-    .update({
-      email:
-        email.toLowerCase(),
-
-      status:
-        "waitlisted",
-
-      updated_at:
-        new Date()
-          .toISOString(),
-    })
-    .eq(
-      "instagram_user_id",
-      senderId
-    );
-
-  if (error) {
-    console.error(
-      "Failed to save waitlist email:",
-      error
-    );
-
-    return;
-  }
-
-  const confirmation =
-    "you're on the waitlist bro, i'll let you know when it releases 🤝";
-
-  await sendInstagramMessage(
-    senderId,
-    confirmation
-  );
-
-  await saveAssistantMessage(
-    senderId,
-    confirmation
-  );
-
-  console.log(
-    "WAITLIST SIGNUP COMPLETE:",
-    {
-      senderId,
-      email,
-    }
-  );
-}
-
-// ======================================================
-// LOAD CONVERSATION
-// ======================================================
-
-async function getConversation(
-  senderId: string
-) {
+async function hasAlreadyReceivedLink(
+  instagramUserId: string
+): Promise<boolean> {
   const {
     data,
     error,
   } = await supabaseAdmin
     .from(
-      "community_waitlist_messages"
+      "community_link_deliveries"
     )
     .select(
-      "role, content, created_at"
+      "id"
     )
     .eq(
       "instagram_user_id",
-      senderId
+      instagramUserId
     )
-    .order(
-      "created_at",
-      {
-        ascending:
-          false,
-      }
+    .not(
+      "sent_at",
+      "is",
+      null
     )
-    .limit(20);
+    .limit(1);
 
   if (error) {
     console.error(
-      "Conversation loading failed:",
+      "Delivery lookup failed:",
       error
     );
 
-    throw error;
+    // Don't block the automation if this lookup fails.
+    return false;
   }
 
   return (
-    data ?? []
-  )
-    .reverse()
-    .map(
-      (message) => ({
-        role:
-          message.role as
-            | "user"
-            | "assistant",
-
-        content:
-          message.content,
-      })
-    );
+    data !== null &&
+    data.length > 0
+  );
 }
 
 // ======================================================
-// SAVE USER MESSAGE
+// RESERVE DELIVERY
 // ======================================================
 
-async function saveUserMessage(
-  senderId: string,
-  text: string,
-  messageId: string
+async function reserveDelivery(
+  input: {
+    sourceType:
+      "comment" |
+      "dm";
+
+    sourceId:
+      string;
+
+    instagramUserId:
+      string |
+      null;
+
+    sourceText:
+      string;
+  }
 ): Promise<boolean> {
   const {
     error,
   } = await supabaseAdmin
     .from(
-      "community_waitlist_messages"
+      "community_link_deliveries"
     )
     .insert({
+      source_type:
+        input.sourceType,
+
+      source_id:
+        input.sourceId,
+
       instagram_user_id:
-        senderId,
+        input.instagramUserId,
 
-      instagram_message_id:
-        messageId,
+      source_text:
+        input.sourceText,
 
-      role:
-        "user",
-
-      content:
-        text,
+      sent_at:
+        null,
     });
 
   if (!error) {
     return true;
   }
 
+  // Duplicate source ID
   if (
     error.code ===
     "23505"
@@ -1387,7 +645,7 @@ async function saveUserMessage(
   }
 
   console.error(
-    "User message save failed:",
+    "Failed to reserve community delivery:",
     error
   );
 
@@ -1395,92 +653,83 @@ async function saveUserMessage(
 }
 
 // ======================================================
-// SAVE ASSISTANT MESSAGE
+// MARK DELIVERY SUCCESSFUL
 // ======================================================
 
-async function saveAssistantMessage(
-  senderId: string,
-  text: string
+async function markDeliverySent(
+  sourceId: string,
+  instagramUserId:
+    string |
+    null
 ) {
   const {
     error,
   } = await supabaseAdmin
     .from(
-      "community_waitlist_messages"
-    )
-    .insert({
-      instagram_user_id:
-        senderId,
-
-      role:
-        "assistant",
-
-      content:
-        text,
-    });
-
-  if (error) {
-    console.error(
-      "Assistant message save failed:",
-      error
-    );
-  }
-}
-
-// ======================================================
-// UPDATE LEAD STATUS
-// ======================================================
-
-async function updateLeadStatus(
-  senderId: string,
-  status: string
-) {
-  const {
-    error,
-  } = await supabaseAdmin
-    .from(
-      "community_waitlist_leads"
+      "community_link_deliveries"
     )
     .update({
-      status,
+      instagram_user_id:
+        instagramUserId,
 
-      updated_at:
+      sent_at:
         new Date()
           .toISOString(),
     })
     .eq(
-      "instagram_user_id",
-      senderId
+      "source_id",
+      sourceId
     );
 
   if (error) {
     console.error(
-      "Lead status update failed:",
+      "Failed to mark community link sent:",
       error
     );
   }
 }
 
 // ======================================================
-// EMAIL EXTRACTION
+// REMOVE FAILED RESERVATION
 // ======================================================
 
-function extractEmail(
-  text: string
+async function removeDeliveryReservation(
+  sourceId: string
 ) {
-  const match =
-    text.match(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+  const {
+    error,
+  } = await supabaseAdmin
+    .from(
+      "community_link_deliveries"
+    )
+    .delete()
+    .eq(
+      "source_id",
+      sourceId
     );
 
-  return (
-    match?.[0] ??
-    null
-  );
+  if (error) {
+    console.error(
+      "Failed to remove delivery reservation:",
+      error
+    );
+  }
 }
 
 // ======================================================
 // COMMUNITY TRIGGER
+//
+// Works with:
+// community
+// COMMUNITY
+// Community
+// community🔥
+// community bro
+// comunity
+// communty
+// commmunity
+// communityy
+// etc.
 // ======================================================
 
 function isCommunityTrigger(
@@ -1489,27 +738,34 @@ function isCommunityTrigger(
   const words =
     text
       .toLowerCase()
-      .match(/[a-z]+/g) ??
+      .match(
+        /[a-z]+/g
+      ) ??
     [];
 
   const target =
     "community";
 
   for (
-    const word of words
+    const word of
+    words
   ) {
+    // Exact match
     if (
-      word === target
+      word ===
+      target
     ) {
       return true;
     }
 
+    // Avoid fuzzy matching tiny words.
     if (
       word.length < 6
     ) {
       continue;
     }
 
+    // Allow up to 2 edits.
     if (
       levenshteinDistance(
         word,
@@ -1536,12 +792,16 @@ function levenshteinDistance(
       Array.from(
         {
           length:
-            b.length + 1,
+            b.length +
+            1,
         },
         () =>
           Array(
-            a.length + 1
-          ).fill(0)
+            a.length +
+            1
+          ).fill(
+            0
+          )
       );
 
   for (
@@ -1589,15 +849,18 @@ function levenshteinDistance(
               i - 1
             ][
               j - 1
-            ] + 1,
+            ] +
+              1,
 
             matrix[i][
               j - 1
-            ] + 1,
+            ] +
+              1,
 
             matrix[
               i - 1
-            ][j] + 1
+            ][j] +
+              1
           );
       }
     }
